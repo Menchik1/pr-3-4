@@ -62,7 +62,39 @@ int getSecondLotIdFromPair(dbase& db, int pairId) {
     }
     return -1; // Возвращаем -1, если не найдено
 }
+int getFirstLotIdFromPair(dbase& db, int pairId) {
+    std::string pairFile = db.schema_name + "/pair/1.csv"; // Путь к файлу с парами
+    std::ifstream file(pairFile);
+    std::string line;
 
+    // Преобразуем pairId в строку
+    std::string pairIdStr = std::to_string(pairId);
+
+    while (std::getline(file, line)) {
+        std::istringstream ss(line);
+        std::string currentPairIdStr, firstLotId, secondLotId;
+        std::getline(ss, currentPairIdStr, ',');
+        std::getline(ss, firstLotId, ',');
+        std::getline(ss, secondLotId, ',');
+
+        // Проверка на корректность данных
+        if (currentPairIdStr.empty() || firstLotId.empty() || secondLotId.empty()) {
+            continue; // Пропускаем некорректные строки
+        }
+
+        // Сравниваем строковые представления
+        if (currentPairIdStr == pairIdStr) {
+            // Пробуем преобразовать secondLotId в число
+            try {
+                return std::stoi(firstLotId); // Возвращаем second_lot_id
+            } catch (const std::invalid_argument& e) {
+                std::cerr << "Ошибка преобразования строки в число: " << e.what() << std::endl;
+                return -1; // Возвращаем -1 в случае ошибки
+            }
+        }
+    }
+    return -1; // Возвращаем -1, если не найдено
+}
 
 // Функция для получения максимального user_id
 int getMaxUserId(const std::string& filename) {
@@ -377,6 +409,124 @@ void createOrder(dbase& db, const std::string& userId, int pairId, double quanti
         std::cout << "Ошибка при открытии файла для записи." << std::endl;
     }
 }
+void applyOrder(dbase& db, int userId, int orderId) {
+    std::string orderFile = db.schema_name + "/order/1.csv";
+    std::ifstream orderStream(orderFile);
+    std::string line;
+    json orderData;
+
+    // Поиск ордера по orderId
+    while (std::getline(orderStream, line)) {
+        std::istringstream ss(line);
+        std::string orderIdFromFile, userIdFromFile, pairIdStr, quantityStr, price, type, closed;
+        std::getline(ss, orderIdFromFile, ',');
+        std::getline(ss, userIdFromFile, ',');
+        std::getline(ss, pairIdStr, ',');
+        std::getline(ss, quantityStr, ',');
+        std::getline(ss, price, ',');
+        std::getline(ss, type, ',');
+        std::getline(ss, closed, ',');
+
+        if (orderIdFromFile == std::to_string(orderId)) {
+            orderData["order_id"] = orderIdFromFile;
+            orderData["user_id"] = userIdFromFile;
+            orderData["pair_id"] = pairIdStr;
+            orderData["quantity"] = quantityStr;
+            orderData["price"] = price;
+            orderData["type"] = type;
+            break;
+        }
+    }
+    orderStream.close();
+
+    if (orderData.empty()) {
+        std::cout << "Ошибка: ордер с ID " << orderId << " не найден." << std::endl;
+        return;
+    }
+
+    // Получаем second_lot_id из пары
+    int pairId = std::stoi(orderData["pair_id"].get<std::string>());
+    int secondLotId = getFirstLotIdFromPair(db, pairId);
+    double quantity = std::stod(orderData["quantity"].get<std::string>());
+    double coefficient = 1.0; // Укажите коэффициент, если он известен
+
+    // Обновление лотов у пользователя, который принимает ордер
+    std::string userLotFile = db.schema_name + "/user_lot/1.csv";
+    std::ifstream userLotStream(userLotFile);
+    std::string updatedUserLotContent;
+    double lottosToDeduct = quantity / coefficient;
+
+    // Списываем лоты у пользователя, принимающего ордер
+    while (std::getline(userLotStream, line)) {
+        std::istringstream ss(line);
+        std::string userIdFromFile, lotId, userQuantityStr;
+        std::getline(ss, userIdFromFile, ',');
+        std::getline(ss, lotId, ',');
+        std::getline(ss, userQuantityStr, ',');
+
+        if (userIdFromFile == std::to_string(userId) && lotId == std::to_string(secondLotId)) {
+            double currentQuantity = std::stod(userQuantityStr);
+            double newQuantity = currentQuantity - lottosToDeduct;
+
+            if (newQuantity < 0) {
+                std::cout << "Ошибка: недостаточно лотов для списания." << std::endl;
+                return;
+            }
+
+            updatedUserLotContent += userIdFromFile + "," + lotId + "," + std::to_string(newQuantity) + "\n";
+            std::cout << "Обновленный quantity для пользователя " << userId << ": " << newQuantity << std::endl;
+        } else {
+            updatedUserLotContent += line + "\n"; // Оставляем без изменений
+        }
+    }
+    userLotStream.close();
+
+    // Записываем обновленный баланс обратно в файл
+    std::ofstream outUserLotFile(userLotFile);
+    if (outUserLotFile.is_open()) {
+        outUserLotFile << updatedUserLotContent;
+        std::cout << "Баланс пользователя обновлен и записан в файл." << std::endl;
+    } else {
+        std::cout << "Ошибка при открытии файла для записи." << std::endl;
+    }
+
+    // Теперь добавляем лоты пользователю, чей ордер был принят
+    std::string originalUserId = orderData["user_id"].get<std::string>();
+    std::string originalUserLotFile = db.schema_name + "/user_lot/1.csv";
+    std::ifstream originalUserLotStream(originalUserLotFile);
+    std::string originalUpdatedContent;
+
+    while (std::getline(originalUserLotStream, line)) {
+        std::istringstream ss(line);
+        std::string userIdFromFile, lotId, userQuantityStr;
+        std::getline(ss, userIdFromFile, ',');
+        std::getline(ss, lotId, ',');
+        std::getline(ss, userQuantityStr, ',');
+
+        if (userIdFromFile == originalUserId && lotId == std::to_string(secondLotId)) {
+            double currentQuantity = std::stod(userQuantityStr);
+            double newQuantity = currentQuantity + lottosToDeduct;
+
+            originalUpdatedContent += originalUserId + "," + std::to_string(secondLotId) + "," + std::to_string(newQuantity) + "\n";
+            std::cout << "Обновленный quantity для оригинального пользователя " << originalUserId << ": " << newQuantity << std::endl;
+        } else {
+            originalUpdatedContent += line + "\n"; // Оставляем без изменений
+        }
+    }
+    originalUserLotStream.close();
+
+    // Записываем обновленный баланс обратно в файл
+    std::ofstream outOriginalUserLotFile(originalUserLotFile);
+    if (outOriginalUserLotFile.is_open()) {
+        outOriginalUserLotFile << originalUpdatedContent;
+        std::cout << "Баланс оригинального пользователя обновлен и записан в файл." << std::endl;
+    } else {
+        std::cout << "Ошибка при открытии файла для записи." << std::endl;
+    }
+
+    // Удаляем ордер после его применения
+    deleteOrder(db, orderData["order_id"].get<std::string>());
+}
 
 int main() {
     dbase db;
@@ -385,7 +535,6 @@ int main() {
     // Создание папки "Биржа", если она не существует
     if (!fs::exists(db.schema_name)) {
         fs::create_directory(db.schema_name);
-
     }
 
     // Создание папок для каждой таблицы
@@ -394,7 +543,6 @@ int main() {
         std::string folder = db.schema_name + "/" + table;
         if (!fs::exists(folder)) {
             fs::create_directory(folder);
-
         }
     }
 
@@ -423,27 +571,73 @@ int main() {
     // Генерация валютных пар
     generateCurrencyPairs(db);
 
-    // Сохранение данных о пользователях и их активах
-    for (const auto& user_lot : j["user_lot"]["data"]) {
-        saveSingleEntryToCSV(db, "user_lot", user_lot);
+    // Бесконечный цикл для ввода команд
+    while (true) {
+        std::cout << "Введите команду (или 'exit' для выхода): ";
+        std::string command;
+        std::getline(std::cin, command);
+
+        if (command == "exit") {
+            std::cout << "Выход из программы." << std::endl;
+            break; // Выход из бесконечного цикла
+        }
+
+        std::istringstream iss(command);
+        std::string action;
+        iss >> action;
+
+        try {
+            if (action == "insert") {
+                std::string table;
+                iss >> table;
+
+                if (table == "user") {
+                    std::string username;
+                    iss >> username; // Считываем имя пользователя
+                    if (!username.empty()) {
+                        json lotData = j["lot"]; 
+                        addUser(db, username, lotData);
+                    } else {
+                        std::cout << "Ошибка: имя пользователя не указано." << std::endl;
+                    }
+                }
+            } else if (action == "create") {
+                std::string type;
+                iss >> type;
+
+                if (type == "order") {
+                    std::string userId;
+                    int pairId;
+                    double quantity, price;
+                    std::string orderType;
+
+                    iss >> userId >> pairId >> quantity >> price >> orderType;
+                    createOrder(db, userId, pairId, quantity, price, orderType);
+                }
+            } else if (action == "apply") {
+                int userId, orderId;
+                iss >> userId >> orderId; // Считываем user_id и order_id
+                applyOrder(db, userId, orderId);
+            } else if (action == "delete") {
+                std::string type;
+                iss >> type;
+
+                if (type == "order") {
+                    std::string orderId;
+                    iss >> orderId; // Считываем order_id
+                    if (!orderId.empty()) {
+                        deleteOrder(db, orderId);
+                    } else {
+                        std::cout << "Ошибка: order_id не указано." << std::endl;
+                    }
+                }
+            } else {
+                throw runtime_error("Неизвестная команда: " + command);
+            }
+        } catch (const exception& e) {
+            std::cout << "Ошибка: " << e.what() << std::endl;
+        }
     }
-
-    // Сохранение данных о заявках
-    for (const auto& order : j["order"]["data"]) {
-        saveSingleEntryToCSV(db, "order", order);
-    }
-
-    // Сохранение данных о парах
-    for (const auto& pair : j["pair"]["data"]) {
-        saveSingleEntryToCSV(db, "pair", pair);
-    }
-
-    // Пример добавления нового пользователя
-    addUser(db, "NewUser", j["lot"]); // Добавление нового пользователя с именем "NewUser"
-
-    // Пример создания ордера
-    createOrder(db, "2", 2, 300, 0.015, "buy"); // Создание ордера на покупку 300 RUB за 0.015 USD
-    deleteOrder(db, "1");
 
     return 0;
 }
