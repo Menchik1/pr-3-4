@@ -1,0 +1,33 @@
+{
+  "user": {
+    "headers": ["user_id", "username", "key"],
+    "data": [
+      {"user_id": "1", "username": "User1", "key": "key1"}
+    ]
+  },
+  "lot": {
+    "headers": ["lot_id", "name"],
+    "data": [
+      {"lot_id": "1", "name": "RUB"},
+      {"lot_id": "2", "name": "USD"},
+      {"lot_id": "3", "name": "BTC"}
+    ]
+  },
+  "user_lot": {
+    "headers": ["user_id", "lot_id", "quantity"],
+    "data": [
+      {"user_id": "1", "lot_id": "1", "quantity": "1000"},
+      {"user_id": "1", "lot_id": "2", "quantity": "1000"}
+    ]
+  },
+  "order": {
+    "headers": ["order_id", "user_id", "pair_id", "quantity", "price", "type", "closed"],
+    "data": [
+    ]
+  },
+  "pair": {
+    "headers": ["pair_id", "first_lot_id", "second_lot_id"],
+    "data": [
+    ]
+  }
+}
