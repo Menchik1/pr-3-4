@@ -62,6 +62,32 @@ int getSecondLotIdFromPair(dbase& db, int pairId) {
     }
     return -1; // Возвращаем -1, если не найдено
 }
+bool isValidNumber(const std::string& str) {
+    if (str.empty()) return false;
+
+    bool hasDecimalPoint = false;
+    for (char c : str) {
+        if (c == '-') {
+            // Разрешаем минус только в начале
+            if (&c != &str[0]) return false;
+        } else if (c == '.') {
+            // Разрешаем только одну десятичную точку
+            if (hasDecimalPoint) return false;
+            hasDecimalPoint = true;
+        } else if (!isdigit(c)) {
+            return false; // Если не цифра, возвращаем false
+        }
+    }
+    return true;
+}
+
+double safeStod(const std::string& str) {
+    if (!isValidNumber(str)) {
+        throw std::invalid_argument("Некорректный формат числа: " + str);
+    }
+    return std::stod(str);
+}
+
 int getFirstLotIdFromPair(dbase& db, int pairId) {
     std::string pairFile = db.schema_name + "/pair/1.csv"; // Путь к файлу с парами
     std::ifstream file(pairFile);
@@ -409,14 +435,20 @@ void createOrder(dbase& db, const std::string& userId, int pairId, double quanti
         std::cout << "Ошибка при открытии файла для записи." << std::endl;
     }
 }
+
+
 void applyOrder(dbase& db, int userId, int orderId) {
     std::string orderFile = db.schema_name + "/order/1.csv";
     std::ifstream orderStream(orderFile);
     std::string line;
     json orderData;
+    bool orderFound = false;
 
-    // Поиск ордера по orderId
+    // Считываем все ордера
+    std::vector<std::string> allOrders;
+
     while (std::getline(orderStream, line)) {
+        allOrders.push_back(line);
         std::istringstream ss(line);
         std::string orderIdFromFile, userIdFromFile, pairIdStr, quantityStr, price, type, closed;
         std::getline(ss, orderIdFromFile, ',');
@@ -433,100 +465,109 @@ void applyOrder(dbase& db, int userId, int orderId) {
             orderData["pair_id"] = pairIdStr;
             orderData["quantity"] = quantityStr;
             orderData["price"] = price;
-            orderData["type"] = type;
-            break;
+            orderData["type"] = "sell"; // Меняем тип на sell
+            orderData["closed"] = closed;
+            orderFound = true;
         }
     }
     orderStream.close();
 
-    if (orderData.empty()) {
+    if (!orderFound) {
         std::cout << "Ошибка: ордер с ID " << orderId << " не найден." << std::endl;
         return;
     }
 
-    // Получаем second_lot_id из пары
+    // Вычисляем стоимость ордера
+    double quantity = safeStod(orderData["quantity"].get<std::string>());
+    double price = safeStod(orderData["price"].get<std::string>());
+    double totalCost = quantity;
+
+    // Получаем first_lot_id из таблицы пар
     int pairId = std::stoi(orderData["pair_id"].get<std::string>());
-    int secondLotId = getFirstLotIdFromPair(db, pairId);
-    double quantity = std::stod(orderData["quantity"].get<std::string>());
-    double coefficient = 1.0; // Укажите коэффициент, если он известен
+    int firstLotId = getFirstLotIdFromPair(db, pairId);
+    if (firstLotId == -1) {
+        std::cerr << "Ошибка: первый лот не найден для пары ID: " << pairId << std::endl;
+        return;
+    }
 
-    // Обновление лотов у пользователя, который принимает ордер
     std::string userLotFile = db.schema_name + "/user_lot/1.csv";
-    std::ifstream userLotStream(userLotFile);
-    std::string updatedUserLotContent;
-    double lottosToDeduct = quantity / coefficient;
+    std::ifstream userFile(userLotFile);
+    std::string updatedContent;
+    bool lotUpdated = false;
 
-    // Списываем лоты у пользователя, принимающего ордер
-    while (std::getline(userLotStream, line)) {
+    // Проверяем наличие лота для списания
+    while (std::getline(userFile, line)) {
         std::istringstream ss(line);
-        std::string userIdFromFile, lotId, userQuantityStr;
+        std::string userIdFromFile, lotId, quantityStr;
         std::getline(ss, userIdFromFile, ',');
         std::getline(ss, lotId, ',');
-        std::getline(ss, userQuantityStr, ',');
+        std::getline(ss, quantityStr, ',');
 
-        if (userIdFromFile == std::to_string(userId) && lotId == std::to_string(secondLotId)) {
-            double currentQuantity = std::stod(userQuantityStr);
-            double newQuantity = currentQuantity - lottosToDeduct;
+        if (userIdFromFile == std::to_string(userId)) {
+            double currentQuantity = safeStod(quantityStr);
 
-            if (newQuantity < 0) {
-                std::cout << "Ошибка: недостаточно лотов для списания." << std::endl;
-                return;
+            // Обновляем quantity для первого лота
+            if (lotId == std::to_string(firstLotId)) {
+                double newQuantity = currentQuantity - totalCost; // Вычитаем стоимость
+                updatedContent += userIdFromFile + "," + lotId + "," + std::to_string(newQuantity) + "\n";
+                lotUpdated = true;
+                std::cout << "Обновленный quantity: " << newQuantity << std::endl;
+            } else {
+                updatedContent += line + "\n"; // Оставляем без изменений
             }
-
-            updatedUserLotContent += userIdFromFile + "," + lotId + "," + std::to_string(newQuantity) + "\n";
-            std::cout << "Обновленный quantity для пользователя " << userId << ": " << newQuantity << std::endl;
         } else {
-            updatedUserLotContent += line + "\n"; // Оставляем без изменений
+            updatedContent += line + "\n"; // Оставляем без изменений
         }
     }
-    userLotStream.close();
+    userFile.close();
 
-    // Записываем обновленный баланс обратно в файл
-    std::ofstream outUserLotFile(userLotFile);
-    if (outUserLotFile.is_open()) {
-        outUserLotFile << updatedUserLotContent;
-        std::cout << "Баланс пользователя обновлен и записан в файл." << std::endl;
+    if (!lotUpdated) {
+        std::cout << "Ошибка: лот для пользователя с ID " << userId << " не найден." << std::endl;
+        return;
+    }
+
+    // Записываем обновлённый баланс обратно в файл
+    std::ofstream outFile(userLotFile);
+    if (outFile.is_open()) {
+        outFile << updatedContent;
+        std::cout << "Баланс обновлен и записан в файл." << std::endl;
     } else {
         std::cout << "Ошибка при открытии файла для записи." << std::endl;
     }
 
-    // Теперь добавляем лоты пользователю, чей ордер был принят
-    std::string originalUserId = orderData["user_id"].get<std::string>();
-    std::string originalUserLotFile = db.schema_name + "/user_lot/1.csv";
-    std::ifstream originalUserLotStream(originalUserLotFile);
-    std::string originalUpdatedContent;
+    // Записываем все ордера обратно в файл
+    std::ofstream orderOutFile(orderFile);
+    if (orderOutFile.is_open()) {
+        for (const auto& order : allOrders) {
+            std::istringstream ss(order);
+            std::string orderIdFromFile, userIdFromFile, pairIdStr, quantityStr, price, type, closed;
+            std::getline(ss, orderIdFromFile, ',');
+            std::getline(ss, userIdFromFile, ',');
+            std::getline(ss, pairIdStr, ',');
+            std::getline(ss, quantityStr, ',');
+            std::getline(ss, price, ',');
+            std::getline(ss, type, ',');
+            std::getline(ss, closed, ',');
 
-    while (std::getline(originalUserLotStream, line)) {
-        std::istringstream ss(line);
-        std::string userIdFromFile, lotId, userQuantityStr;
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, lotId, ',');
-        std::getline(ss, userQuantityStr, ',');
-
-        if (userIdFromFile == originalUserId && lotId == std::to_string(secondLotId)) {
-            double currentQuantity = std::stod(userQuantityStr);
-            double newQuantity = currentQuantity + lottosToDeduct;
-
-            originalUpdatedContent += originalUserId + "," + std::to_string(secondLotId) + "," + std::to_string(newQuantity) + "\n";
-            std::cout << "Обновленный quantity для оригинального пользователя " << originalUserId << ": " << newQuantity << std::endl;
-        } else {
-            originalUpdatedContent += line + "\n"; // Оставляем без изменений
+            if (orderIdFromFile == orderData["order_id"].get<std::string>()) {
+                orderOutFile << orderData["order_id"].get<std::string>() << ","
+                             << userIdFromFile << ","
+                             << pairIdStr << ","
+                             << quantityStr << ","
+                             << price << ","
+                             << orderData["type"].get<std::string>() << ","
+                             << closed << "\n";
+            } else {
+                orderOutFile << order << "\n";
+            }
         }
-    }
-    originalUserLotStream.close();
-
-    // Записываем обновленный баланс обратно в файл
-    std::ofstream outOriginalUserLotFile(originalUserLotFile);
-    if (outOriginalUserLotFile.is_open()) {
-        outOriginalUserLotFile << originalUpdatedContent;
-        std::cout << "Баланс оригинального пользователя обновлен и записан в файл." << std::endl;
+        orderOutFile.close();
+        std::cout << "Ордер обновлен на 'sell' и записан в файл." << std::endl;
     } else {
-        std::cout << "Ошибка при открытии файла для записи." << std::endl;
+        std::cout << "Ошибка при открытии файла для записи ордеров." << std::endl;
     }
-
-    // Удаляем ордер после его применения
-    deleteOrder(db, orderData["order_id"].get<std::string>());
 }
+
 
 void getOrders(dbase& db) {
     std::string orderFile = db.schema_name + "/order/1.csv";
