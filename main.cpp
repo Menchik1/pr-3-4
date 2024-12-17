@@ -221,6 +221,7 @@ void saveSingleEntryToCSV(dbase& db, const std::string& table, const json& entry
         std::cout << "Error: " << e.what() << std::endl;
     }
 }
+// Функция для удаления ордера
 void deleteOrder(dbase& db, const std::string& orderId) {
     std::string orderFile = db.schema_name + "/order/1.csv";
     std::ifstream orderStream(orderFile);
@@ -314,6 +315,7 @@ void deleteOrder(dbase& db, const std::string& orderId) {
         std::cout << "Ошибка при открытии файла для записи." << std::endl;
     }
 }
+
 
 
 // Функция для добавления нового пользователя
@@ -446,12 +448,6 @@ void createOrder(dbase& db, const std::string& userId, int pairId, double quanti
     }
 }
 
-
-#include <chrono>
-#include <iomanip>
-#include <ctime>
-
-// Остальные ваши include...
 
 void applyOrder(dbase& db, int userId, int orderId) {
     std::string orderFile = db.schema_name + "/order/1.csv";
@@ -595,7 +591,6 @@ void applyOrder(dbase& db, int userId, int orderId) {
         std::cout << "Ошибка при открытии файла для записи ордеров." << std::endl;
     }
 }
-
 
 
 void getOrders(dbase& db) {
