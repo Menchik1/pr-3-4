@@ -528,6 +528,99 @@ void applyOrder(dbase& db, int userId, int orderId) {
     deleteOrder(db, orderData["order_id"].get<std::string>());
 }
 
+void getOrders(dbase& db) {
+    std::string orderFile = db.schema_name + "/order/1.csv";
+    std::ifstream file(orderFile);
+    std::string line;
+
+    if (!file.is_open()) {
+        std::cerr << "Ошибка: не удалось открыть файл с ордерами." << std::endl;
+        return;
+    }
+
+    std::cout << "Список ордеров:" << std::endl;
+
+    // Пропускаем заголовок
+    std::getline(file, line);
+    while (std::getline(file, line)) {
+        std::cout << line << std::endl; // Выводим каждую строку (ордер)
+    }
+
+    file.close();
+}
+
+void getLots(dbase& db) {
+    std::string lotFile = db.schema_name + "/lot/1.csv";
+    std::ifstream file(lotFile);
+    std::string line;
+
+    if (!file.is_open()) {
+        std::cerr << "Ошибка: не удалось открыть файл с лотами." << std::endl;
+        return;
+    }
+
+    std::cout << "Список лотов:" << std::endl;
+
+    // Пропускаем заголовок
+    std::getline(file, line);
+    while (std::getline(file, line)) {
+        std::cout << line << std::endl; // Выводим каждую строку (лот)
+    }
+
+    file.close();
+}
+
+void getPairs(dbase& db) {
+    std::string pairFile = db.schema_name + "/pair/1.csv";
+    std::ifstream file(pairFile);
+    std::string line;
+
+    if (!file.is_open()) {
+        std::cerr << "Ошибка: не удалось открыть файл с парами." << std::endl;
+        return;
+    }
+
+    std::cout << "Список пар:" << std::endl;
+
+    // Пропускаем заголовок
+    std::getline(file, line);
+    while (std::getline(file, line)) {
+        std::cout << line << std::endl; // Выводим каждую строку (пара)
+    }
+
+    file.close();
+}
+
+void getUserAssets(dbase& db, const std::string& userId) {
+    std::string userLotFile = db.schema_name + "/user_lot/1.csv";
+    std::ifstream file(userLotFile);
+    std::string line;
+
+    if (!file.is_open()) {
+        std::cerr << "Ошибка: не удалось открыть файл с активами пользователей." << std::endl;
+        return;
+    }
+
+    std::cout << "Активы пользователя с ID " << userId << ":" << std::endl;
+
+    // Пропускаем заголовок
+    std::getline(file, line);
+    while (std::getline(file, line)) {
+        std::istringstream ss(line);
+        std::string userIdFromFile, lotId, quantityStr;
+        std::getline(ss, userIdFromFile, ',');
+        std::getline(ss, lotId, ',');
+        std::getline(ss, quantityStr, ',');
+
+        if (userIdFromFile == userId) {
+            std::cout << "Лот ID: " << lotId << ", Количество: " << quantityStr << std::endl; // Выводим активы
+        }
+    }
+
+    file.close();
+}
+
+
 int main() {
     dbase db;
     db.schema_name = "Биржа"; // Название папки для хранения данных
@@ -601,6 +694,14 @@ int main() {
                         std::cout << "Ошибка: имя пользователя не указано." << std::endl;
                     }
                 }
+            } else if (action == "assets") {
+                std::string userId;
+                iss >> userId; // Считываем user_id
+                if (!userId.empty()) {
+                    getUserAssets(db, userId); // Вызов функции для получения активов пользователя
+                } else {
+                    std::cout << "Ошибка: user_id не указан." << std::endl;
+                }
             } else if (action == "create") {
                 std::string type;
                 iss >> type;
@@ -614,7 +715,18 @@ int main() {
                     iss >> userId >> pairId >> quantity >> price >> orderType;
                     createOrder(db, userId, pairId, quantity, price, orderType);
                 }
-            } else if (action == "apply") {
+            } else if (action == "list") {
+            std::string type;
+            iss >> type;
+
+            if (type == "orders") {
+                getOrders(db); // Вызов функции для получения списка ордеров
+            } else if (type == "lots") {
+                getLots(db); // Вызов функции для получения списка лотов
+            } else if (type == "pairs") {
+                getPairs(db); // Вызов функции для получения списка пар
+            }
+            }else if (action == "apply") {
                 int userId, orderId;
                 iss >> userId >> orderId; // Считываем user_id и order_id
                 applyOrder(db, userId, orderId);
