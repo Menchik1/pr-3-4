@@ -5,6 +5,8 @@
 #include <filesystem> // Для работы с файловой системой
 #include <random>     // Для генерации уникального ключа
 #include <vector>     // Для работы с векторами
+#include <chrono>
+#include <ctime>
 
 using namespace std;
 using json = nlohmann::json;
@@ -219,7 +221,6 @@ void saveSingleEntryToCSV(dbase& db, const std::string& table, const json& entry
         std::cout << "Error: " << e.what() << std::endl;
     }
 }
-// Функция для удаления ордера
 void deleteOrder(dbase& db, const std::string& orderId) {
     std::string orderFile = db.schema_name + "/order/1.csv";
     std::ifstream orderStream(orderFile);
@@ -245,7 +246,17 @@ void deleteOrder(dbase& db, const std::string& orderId) {
             userId = userIdFromFile;
             pairId = std::stoi(pairIdStr);
             totalCost = std::stod(quantityStr) * std::stod(price); // Рассчитываем общую стоимость
-            std::cout << "Удаление ордера: " << line << std::endl;
+            
+            // Получаем текущее время
+            auto now = std::chrono::system_clock::now();
+            std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+            std::stringstream timeStream;
+            timeStream << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
+
+            // Обновляем строку ордера
+            updatedContent += orderIdFromFile + "," + userIdFromFile + "," + pairIdStr + ","
+                             + quantityStr + "," + price + ",sell," + timeStream.str() + "\n"; // Изменяем тип на 'sell' и добавляем время
+            std::cout << "Закрытие ордера: " << line << std::endl;
             continue; // Пропускаем удаляемый ордер
         }
         updatedContent += line + "\n"; // Сохраняем остальные ордера
@@ -303,7 +314,6 @@ void deleteOrder(dbase& db, const std::string& orderId) {
         std::cout << "Ошибка при открытии файла для записи." << std::endl;
     }
 }
-
 
 
 // Функция для добавления нового пользователя
@@ -437,6 +447,12 @@ void createOrder(dbase& db, const std::string& userId, int pairId, double quanti
 }
 
 
+#include <chrono>
+#include <iomanip>
+#include <ctime>
+
+// Остальные ваши include...
+
 void applyOrder(dbase& db, int userId, int orderId) {
     std::string orderFile = db.schema_name + "/order/1.csv";
     std::ifstream orderStream(orderFile);
@@ -460,13 +476,19 @@ void applyOrder(dbase& db, int userId, int orderId) {
         std::getline(ss, closed, ',');
 
         if (orderIdFromFile == std::to_string(orderId)) {
+            // Проверка на тип ордера
+            if (type != "buy") {
+                std::cout << "Ошибка: ордер с ID " << orderId << " уже закрыт или не доступен для покупки." << std::endl;
+                return;
+            }
+
             orderData["order_id"] = orderIdFromFile;
             orderData["user_id"] = userIdFromFile;
             orderData["pair_id"] = pairIdStr;
             orderData["quantity"] = quantityStr;
             orderData["price"] = price;
             orderData["type"] = "sell"; // Меняем тип на sell
-            orderData["closed"] = closed;
+            orderData["closed"] = ""; // Изначально пустое
             orderFound = true;
         }
     }
@@ -550,13 +572,19 @@ void applyOrder(dbase& db, int userId, int orderId) {
             std::getline(ss, closed, ',');
 
             if (orderIdFromFile == orderData["order_id"].get<std::string>()) {
+                // Получаем текущее время
+                auto now = std::chrono::system_clock::now();
+                std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+                std::stringstream timeStream;
+                timeStream << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
+
                 orderOutFile << orderData["order_id"].get<std::string>() << ","
                              << userIdFromFile << ","
                              << pairIdStr << ","
                              << quantityStr << ","
                              << price << ","
                              << orderData["type"].get<std::string>() << ","
-                             << closed << "\n";
+                             << timeStream.str() << "\n"; // Записываем текущее время в поле closed
             } else {
                 orderOutFile << order << "\n";
             }
@@ -567,6 +595,7 @@ void applyOrder(dbase& db, int userId, int orderId) {
         std::cout << "Ошибка при открытии файла для записи ордеров." << std::endl;
     }
 }
+
 
 
 void getOrders(dbase& db) {
