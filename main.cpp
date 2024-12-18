@@ -1,820 +1,507 @@
-#include <iostream>
-#include <fstream>
-#include "json.hpp"
-#include <sstream>
-#include <filesystem> // Для работы с файловой системой
-#include <random>     // Для генерации уникального ключа
-#include <vector>     // Для работы с векторами
-#include <chrono>
-#include <ctime>
+import os
+import random
+import json
+import csv
+from datetime import datetime
 
-using namespace std;
-using json = nlohmann::json;
+class DBase:
+    def __init__(self, schema_name):
+        self.schema_name = schema_name
 
-namespace fs = std::filesystem;
+    def generate_unique_key(self):
+        alphanum = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        return ''.join(random.choice(alphanum) for _ in range(10))
 
-struct dbase {
-    std::string schema_name;
-};
+    def get_second_lot_id_from_pair(self, pair_id):
+        pair_file = f"{self.schema_name}/pair/1.csv"
+        with open(pair_file, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if row and row[0] == str(pair_id):
+                    return int(row[2])  # Возвращаем second_lot_id
+        return -1
 
-std::string generateUniqueKey() {
-    static const char alphanum[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    std::string key;
-    std::random_device rd;
-    std::mt19937 generator(rd());
-    std::uniform_int_distribution<> distribution(0, sizeof(alphanum) - 2);
+    def is_valid_number(self, value):
+        try:
+            float(value)
+            return True
+        except ValueError:
+            return False
 
-    for (int i = 0; i < 10; ++i) { // Длина ключа 10 символов
-        key += alphanum[distribution(generator)];
-    }
-    return key;
-}
+    def safe_stod(self, value):
+        if not self.is_valid_number(value):
+            raise ValueError(f"Некорректный формат числа: {value}")
+        return float(value)
 
-// Функция для получения second_lot_id из таблицы пар
-int getSecondLotIdFromPair(dbase& db, int pairId) {
-    std::string pairFile = db.schema_name + "/pair/1.csv"; // Путь к файлу с парами
-    std::ifstream file(pairFile);
-    std::string line;
+    def get_first_lot_id_from_pair(self, pair_id):
+        pair_file = f"{self.schema_name}/pair/1.csv"
+        with open(pair_file, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if row and row[0] == str(pair_id):
+                    return int(row[1])  # Возвращаем first_lot_id
+        return -1
 
-    // Преобразуем pairId в строку
-    std::string pairIdStr = std::to_string(pairId);
+    def get_max_user_id(self, filename):
+        max_id = 0
+        with open(filename, 'r') as file:
+            reader = csv.reader(file)
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                user_id = int(row[0])
+                if user_id > max_id:
+                    max_id = user_id
+        return max_id
 
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        std::string currentPairIdStr, firstLotId, secondLotId;
-        std::getline(ss, currentPairIdStr, ',');
-        std::getline(ss, firstLotId, ',');
-        std::getline(ss, secondLotId, ',');
+    def get_max_order_id(self, filename):
+        max_id = 0
+        with open(filename, 'r') as file:
+            reader = csv.reader(file)
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                order_id = int(row[0])
+                if order_id > max_id:
+                    max_id = order_id
+        return max_id
 
-        // Проверка на корректность данных
-        if (currentPairIdStr.empty() || firstLotId.empty() || secondLotId.empty()) {
-            continue; // Пропускаем некорректные строки
-        }
+    def save_single_entry_to_csv(self, table, entry):
+        filename = f"{self.schema_name}/{table}/1.csv"
+        file_exists = os.path.isfile(filename)
 
-        // Сравниваем строковые представления
-        if (currentPairIdStr == pairIdStr) {
-            // Пробуем преобразовать secondLotId в число
-            try {
-                return std::stoi(secondLotId); // Возвращаем second_lot_id
-            } catch (const std::invalid_argument& e) {
-                std::cerr << "Ошибка преобразования строки в число: " << e.what() << std::endl;
-                return -1; // Возвращаем -1 в случае ошибки
+        with open(filename, 'a', newline='') as file:
+            writer = csv.writer(file)
+            if not file_exists:
+                if table == "user":
+                    writer.writerow(["user_id", "username", "key"])
+                elif table == "lot":
+                    writer.writerow(["lot_id", "name"])
+                elif table == "user_lot":
+                    writer.writerow(["user_id", "lot_id", "quantity"])
+                elif table == "order":
+                    writer.writerow(["order_id", "user_id", "pair_id", "quantity", "price", "type", "closed"])
+                elif table == "pair":
+                    writer.writerow(["pair_id", "first_lot_id", "second_lot_id"])
+
+            if table == "user":
+                writer.writerow([entry["user_id"], entry["username"], entry["key"]])
+            elif table == "lot":
+                writer.writerow([entry["lot_id"], entry["name"]])
+            elif table == "user_lot":
+                writer.writerow([entry["user_id"], entry["lot_id"], entry["quantity"]])
+            elif table == "order":
+                writer.writerow([entry["order_id"], entry["user_id"], entry["pair_id"], entry["quantity"], entry["price"], entry["type"], entry["closed"]])
+            elif table == "pair":
+                writer.writerow([entry["pair_id"], entry["first_lot_id"], entry["second_lot_id"]])
+
+    def delete_order(self, order_id):
+        order_file = f"{self.schema_name}/order/1.csv"
+        updated_content = []
+        user_id = ""
+        total_cost = 0
+        pair_id = -1
+
+        with open(order_file, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if row and row[0] == order_id:
+                    user_id = row[1]
+                    pair_id = int(row[2])
+                    total_cost = float(row[3]) * float(row[4])  # Рассчитываем общую стоимость
+                    closed_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    updated_content.append([row[0], row[1], row[2], row[3], row[4], "sell", closed_time])
+                    print(f"Закрытие ордера: {row}")
+                else:
+                    updated_content.append(row)
+
+        with open(order_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerows(updated_content)
+            print("Ордера обновлены и записаны в файл.")
+
+        second_lot_id = self.get_second_lot_id_from_pair(pair_id)
+        if second_lot_id == -1:
+            print(f"Ошибка: второй лот не найден для пары ID: {pair_id}")
+            return
+
+        user_lot_file = f"{self.schema_name}/user_lot/1.csv"
+        updated_user_lot_content = []
+
+        with open(user_lot_file, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if row and row[0] == user_id and row[1] == str(second_lot_id):
+                    current_quantity = float(row[2])
+                    new_quantity = current_quantity + total_cost  # Возвращаем полную стоимость
+                    updated_user_lot_content.append([user_id, str(second_lot_id), str(new_quantity)])
+                    print(f"Обновленный quantity для пользователя {user_id}: {new_quantity}")
+                else:
+                    updated_user_lot_content.append(row)
+
+        with open(user_lot_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerows(updated_user_lot_content)
+            print("Баланс пользователя обновлен и записан в файл.")
+
+    def add_user(self, username, lot_data):
+        new_user = {}
+        user_file = f"{self.schema_name}/user/1.csv"
+        max_user_id = self.get_max_user_id(user_file)
+        new_user["user_id"] = str(max_user_id + 1)  # Увеличиваем на 1
+        new_user["username"] = username
+        new_user["key"] = self.generate_unique_key()
+
+        self.save_single_entry_to_csv("user", new_user)
+
+        for lot in lot_data["data"]:
+            user_lot_entry = {
+                "user_id": new_user["user_id"],
+                "lot_id": lot["lot_id"],
+                "quantity": "1000"  # Начальный баланс
             }
-        }
-    }
-    return -1; // Возвращаем -1, если не найдено
-}
-bool isValidNumber(const std::string& str) {
-    if (str.empty()) return false;
+            self.save_single_entry_to_csv("user_lot", user_lot_entry)
 
-    bool hasDecimalPoint = false;
-    for (char c : str) {
-        if (c == '-') {
-            // Разрешаем минус только в начале
-            if (&c != &str[0]) return false;
-        } else if (c == '.') {
-            // Разрешаем только одну десятичную точку
-            if (hasDecimalPoint) return false;
-            hasDecimalPoint = true;
-        } else if (!isdigit(c)) {
-            return false; // Если не цифра, возвращаем false
-        }
-    }
-    return true;
-}
+        print(f"Новый пользователь успешно добавлен: {json.dumps(new_user)}")
 
-double safeStod(const std::string& str) {
-    if (!isValidNumber(str)) {
-        throw std::invalid_argument("Некорректный формат числа: " + str);
-    }
-    return std::stod(str);
-}
+    def generate_currency_pairs(self):
+        lot_file = f"{self.schema_name}/lot/1.csv"
+        lots = []
 
-int getFirstLotIdFromPair(dbase& db, int pairId) {
-    std::string pairFile = db.schema_name + "/pair/1.csv"; // Путь к файлу с парами
-    std::ifstream file(pairFile);
-    std::string line;
+        with open(lot_file, 'r') as file:
+            reader = csv.reader(file)
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                if row:
+                    lots.append(row[0])  # Сохраняем только ID лота
 
-    // Преобразуем pairId в строку
-    std::string pairIdStr = std::to_string(pairId);
+        pair_id = 1
+        for i in range(len(lots)):
+            for j in range(len(lots)):
+                if i != j:  # Исключаем одинаковые пары
+                    new_pair = {
+                        "pair_id": str(pair_id),
+                        "first_lot_id": lots[i],
+                        "second_lot_id": lots[j]
+                    }
+                    self.save_single_entry_to_csv("pair", new_pair)
+                    pair_id += 1
 
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        std::string currentPairIdStr, firstLotId, secondLotId;
-        std::getline(ss, currentPairIdStr, ',');
-        std::getline(ss, firstLotId, ',');
-        std::getline(ss, secondLotId, ',');
+    def find_pair_id_by_lots(self, first_lot, second_lot):
+        pair_file = f"{self.schema_name}/pair/1.csv"
+        with open(pair_file, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if row and ((row[1] == first_lot and row[2] == second_lot) or (row[1] == second_lot and row[2] == first_lot)):
+                    return int(row[0])  # Возвращаем найденный pairId
+        return -1
 
-        // Проверка на корректность данных
-        if (currentPairIdStr.empty() || firstLotId.empty() || secondLotId.empty()) {
-            continue; // Пропускаем некорректные строки
-        }
+    def get_reverse_pair_id_and_check_orders(self, pair_id, order_type, price, quantity):
+        pair_file = f"{self.schema_name}/pair/1.csv"
+        with open(pair_file, 'r') as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if row and row[0] == str(pair_id):
+                    reverse_pair_id = self.find_pair_id_by_lots(row[1], row[2])
+                    if reverse_pair_id != -1:
+                        order_file = f"{self.schema_name}/order/1.csv"
+                        with open(order_file, 'r') as order_file:
+                            order_reader = csv.reader(order_file)
+                            for order_row in order_reader:
+                                if order_row and order_row[2] == str(reverse_pair_id) and order_row[5] != order_type:
+                                    existing_quantity = float(order_row[3])
+                                    existing_price = float(order_row[4])
 
-        // Сравниваем строковые представления
-        if (currentPairIdStr == pairIdStr) {
-            // Пробуем преобразовать secondLotId в число
-            try {
-                return std::stoi(firstLotId); // Возвращаем second_lot_id
-            } catch (const std::invalid_argument& e) {
-                std::cerr << "Ошибка преобразования строки в число: " << e.what() << std::endl;
-                return -1; // Возвращаем -1 в случае ошибки
-            }
-        }
-    }
-    return -1; // Возвращаем -1, если не найдено
-}
+                                    if (order_type == "buy" and existing_price <= price) or (order_type == "sell" and existing_price >= price):
+                                        matched_quantity = min(quantity, existing_quantity)
+                                        quantity -= matched_quantity
+                                        existing_quantity -= matched_quantity
 
-// Функция для получения максимального user_id
-int getMaxUserId(const std::string& filename) {
-    int maxId = 0;
-    std::ifstream file(filename);
-    if (file.is_open()) {
-        std::string line;
-        std::getline(file, line); // Пропускаем заголовок
-        while (std::getline(file, line)) {
-            std::istringstream ss(line);
-            std::string userIdStr;
-            std::getline(ss, userIdStr, ','); // Читаем user_id
-            int userId = std::stoi(userIdStr);
-            if (userId > maxId) {
-                maxId = userId;
-            }
-        }
-        file.close();
-    }
-    return maxId;
-}
+                                        if existing_quantity > 0:
+                                            with open(order_file, 'a', newline='') as order_file:
+                                                order_writer = csv.writer(order_file)
+                                                order_writer.writerow([order_row[0], order_row[1], order_row[2], existing_quantity, order_row[4], order_row[5], order_row[6]])
 
-// Функция для получения максимального order_id
-int getMaxOrderId(const std::string& filename) {
-    int maxId = 0;
-    std::ifstream file(filename);
-    if (file.is_open()) {
-        std::string line;
-        std::getline(file, line); // Пропускаем заголовок
-        while (std::getline(file, line)) {
-            std::istringstream ss(line);
-            std::string orderIdStr;
-            std::getline(ss, orderIdStr, ','); // Читаем order_id
-            int orderId = std::stoi(orderIdStr);
-            if (orderId > maxId) {
-                maxId = orderId;
-            }
-        }
-        file.close();
-    }
-    return maxId;
-}
+                                        print(f"Ордер удовлетворён: {matched_quantity} по цене {existing_price}")
 
-void saveSingleEntryToCSV(dbase& db, const std::string& table, const json& entry) {
-    try {
-        std::string filename = db.schema_name + "/" + table + "/1.csv"; 
-        std::ofstream file(filename, std::ios::app);
+                                        if quantity <= 0:
+                                            return reverse_pair_id
+                    return -1
+        return -1
+
+    def create_order(self, user_id, pair_id, quantity, price, order_type):
+        new_order = {}
+        order_file = f"{self.schema_name}/order/1.csv"
+        max_order_id = self.get_max_order_id(order_file)
+        new_order["order_id"] = str(max_order_id + 1)
+        new_order["user_id"] = user_id
+        new_order["pair_id"] = str(pair_id)
+        new_order["quantity"] = str(quantity)
+        new_order["price"] = str(price)
+        new_order["type"] = order_type
+        new_order["closed"] = ""
+
+        remaining_quantity = quantity
+        reverse_pair_id = self.get_reverse_pair_id_and_check_orders(pair_id, order_type, price, remaining_quantity)
+
+        if remaining_quantity > 0:
+            self.save_single_entry_to_csv("order", new_order)
+            total_cost = remaining_quantity * price
+            print(f"Создание нового ордера для пользователя {user_id} на сумму {total_cost}")
+
+            second_lot_id = self.get_second_lot_id_from_pair(pair_id)
+            if second_lot_id == -1:
+                print(f"Ошибка: второй лот не найден для пары ID: {pair_id}")
+                return
+
+            user_lot_file = f"{self.schema_name}/user_lot/1.csv"
+            updated_content = []
+
+            with open(user_lot_file, 'r') as file:
+                reader = csv.reader(file)
+                for row in reader:
+                    if row and row[0] == user_id:
+                        current_quantity = float(row[2])
+                        if row[1] == str(second_lot_id):
+                            new_quantity = current_quantity - total_cost
+                            updated_content.append([user_id, row[1], str(new_quantity)])
+                            print(f"Обновленный quantity: {new_quantity}")
+                        else:
+                            updated_content.append(row)
+                    else:
+                        updated_content.append(row)
+
+            with open(user_lot_file, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerows(updated_content)
+                print("Баланс обновлен и записан в файл.")
+        else:
+            print("Все количество ордера удовлетворено существующими ордерами.")
+
+    def get_orders(self):
+        order_file = f"{self.schema_name}/order/1.csv"
+        with open(order_file, 'r') as file:
+            reader = csv.reader(file)
+            print("Список ордеров:")
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                print(', '.join(row))
+
+    def get_lots(self):
+        lot_file = f"{self.schema_name}/lot/1.csv"
+        with open(lot_file, 'r') as file:
+            reader = csv.reader(file)
+            print("Список лотов:")
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                print(', '.join(row))
+
+    def get_pairs(self):
+        pair_file = f"{self.schema_name}/pair/1.csv"
+        with open(pair_file, 'r') as file:
+            reader = csv.reader(file)
+            print("Список пар:")
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                print(', '.join(row))
+
+    def get_user_assets(self, user_id):
+        user_lot_file = f"{self.schema_name}/user_lot/1.csv"
+        with open(user_lot_file, 'r') as file:
+            reader = csv.reader(file)
+            print(f"Активы пользователя с ID {user_id}:")
+            next(reader)  # Пропускаем заголовок
+            for row in reader:
+                if row and row[0] == user_id:
+                    print(f"Лот ID: {row[1]}, Количество: {row[2]}")
+
+    def apply_order(self, user_id, order_id):
+        order_file = os.path.join(self.schema_name, "order", "1.csv")
         
-        // Проверка существования файла для записи заголовков
-        if (file) {
-            // Запись заголовков только если файл пустой
-            if (fs::exists(filename) && fs::file_size(filename) == 0) {
-                if (table == "user") {
-                    file << "user_id,username,key\n";
-                } else if (table == "lot") {
-                    file << "lot_id,name\n";
-                } else if (table == "user_lot") {
-                    file << "user_id,lot_id,quantity\n";
-                } else if (table == "order") {
-                    file << "order_id,user_id,pair_id,quantity,price,type,closed\n";
-                } else if (table == "pair") {
-                    file << "pair_id,first_lot_id,second_lot_id\n";
-                }
-            }
-
-            // Запись данных в файл
-            if (table == "user") {
-                file << entry["user_id"].get<std::string>() << ","
-                     << entry["username"].get<std::string>() << ","
-                     << entry["key"].get<std::string>() << "\n";
-            } else if (table == "lot") {
-                file << entry["lot_id"].get<std::string>() << ","
-                     << entry["name"].get<std::string>() << "\n";
-            } else if (table == "user_lot") {
-                file << entry["user_id"].get<std::string>() << ","
-                     << entry["lot_id"].get<std::string>() << ","
-                     << entry["quantity"].get<std::string>() << "\n";
-            } else if (table == "order") {
-                file << entry["order_id"].get<std::string>() << ","
-                     << entry["user_id"].get<std::string>() << ","
-                     << entry["pair_id"].get<std::string>() << ","
-                     << entry["quantity"].get<std::string>() << ","
-                     << entry["price"].get<std::string>() << ","
-                     << entry["type"].get<std::string>() << ","
-                     << entry["closed"].get<std::string>() << "\n";
-            } else if (table == "pair") {
-                file << entry["pair_id"].get<std::string>() << ","
-                     << entry["first_lot_id"].get<std::string>() << ","
-                     << entry["second_lot_id"].get<std::string>() << "\n";
-            }
-
-        } else {
-            throw std::runtime_error("Failed to open data file for saving: " + filename);
-        }
-    } catch (const std::exception& e) {
-        std::cout << "Error: " << e.what() << std::endl;
-    }
-}
-// Функция для удаления ордера
-void deleteOrder(dbase& db, const std::string& orderId) {
-    std::string orderFile = db.schema_name + "/order/1.csv";
-    std::ifstream orderStream(orderFile);
-    std::string line;
-    std::string updatedContent;
-    std::string userId;
-    double totalCost = 0;
-    int pairId = -1;
-
-    // Чтение ордеров и поиск нужного
-    while (std::getline(orderStream, line)) {
-        std::istringstream ss(line);
-        std::string orderIdFromFile, userIdFromFile, pairIdStr, quantityStr, price, type, closed;
-        std::getline(ss, orderIdFromFile, ',');
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, pairIdStr, ',');
-        std::getline(ss, quantityStr, ',');
-        std::getline(ss, price, ',');
-        std::getline(ss, type, ',');
-        std::getline(ss, closed, ',');
-
-        if (orderIdFromFile == orderId) {
-            userId = userIdFromFile;
-            pairId = std::stoi(pairIdStr);
-            totalCost = std::stod(quantityStr) * std::stod(price); // Рассчитываем общую стоимость
-            
-            // Получаем текущее время
-            auto now = std::chrono::system_clock::now();
-            std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-            std::stringstream timeStream;
-            timeStream << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
-
-            // Обновляем строку ордера
-            updatedContent += orderIdFromFile + "," + userIdFromFile + "," + pairIdStr + ","
-                             + quantityStr + "," + price + ",sell," + timeStream.str() + "\n"; // Изменяем тип на 'sell' и добавляем время
-            std::cout << "Закрытие ордера: " << line << std::endl;
-            continue; // Пропускаем удаляемый ордер
-        }
-        updatedContent += line + "\n"; // Сохраняем остальные ордера
-    }
-    orderStream.close();
-
-    // Запись обновленного содержимого в файл
-    std::ofstream outOrderFile(orderFile);
-    if (outOrderFile.is_open()) {
-        outOrderFile << updatedContent;
-        std::cout << "Ордера обновлены и записаны в файл." << std::endl;
-    } else {
-        std::cout << "Ошибка при открытии файла для записи." << std::endl;
-        return;
-    }
-
-    // Получаем second_lot_id из пары
-    int secondLotId = getSecondLotIdFromPair(db, pairId);
-    if (secondLotId == -1) {
-        std::cerr << "Ошибка: второй лот не найден для пары ID: " << pairId << std::endl;
-        return;
-    }
-
-    // Возвращаем количество пользователю
-    std::string userLotFile = db.schema_name + "/user_lot/1.csv";
-    std::ifstream userLotStream(userLotFile);
-    std::string userLotContent;
-    std::string updatedUserLotContent;
-
-    // Обновляем количество для пользователя
-    while (std::getline(userLotStream, line)) {
-        std::istringstream ss(line);
-        std::string userIdFromFile, lotId, userQuantityStr;
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, lotId, ',');
-        std::getline(ss, userQuantityStr, ',');
-
-        if (userIdFromFile == userId && lotId == std::to_string(secondLotId)) {
-            double currentQuantity = std::stod(userQuantityStr);
-            double newQuantity = currentQuantity + totalCost; // Возвращаем полную стоимость
-            updatedUserLotContent += userId + "," + lotId + "," + std::to_string(newQuantity) + "\n";
-            std::cout << "Обновленный quantity для пользователя " << userId << ": " << newQuantity << std::endl;
-        } else {
-            updatedUserLotContent += line + "\n"; // Оставляем без изменений
-        }
-    }
-    userLotStream.close();
-
-    // Записываем обновленный баланс обратно в файл
-    std::ofstream outUserLotFile(userLotFile);
-    if (outUserLotFile.is_open()) {
-        outUserLotFile << updatedUserLotContent;
-        std::cout << "Баланс пользователя обновлен и записан в файл." << std::endl;
-    } else {
-        std::cout << "Ошибка при открытии файла для записи." << std::endl;
-    }
-}
-
-
-
-// Функция для добавления нового пользователя
-void addUser(dbase& db, const std::string& username, const json& lotData) {
-    json newUser;
-    
-    // Получаем максимальный user_id
-    std::string userFile = db.schema_name + "/user/1.csv";
-    int maxUserId = getMaxUserId(userFile);
-    newUser["user_id"] = std::to_string(maxUserId + 1); // Увеличиваем на 1
-    newUser["username"] = username;
-    newUser["key"] = generateUniqueKey();
-
-    // Сохранение нового пользователя
-    saveSingleEntryToCSV(db, "user", newUser);
-
-    // Пополнение баланса на 1000 единиц каждого доступного лота
-    for (const auto& lot : lotData["data"]) {
-        json userLotEntry;
-        userLotEntry["user_id"] = newUser["user_id"];
-        userLotEntry["lot_id"] = lot["lot_id"];
-        userLotEntry["quantity"] = "1000"; // Начальный баланс
-
-        saveSingleEntryToCSV(db, "user_lot", userLotEntry);
-    }
-
-    std::cout << "Новый пользователь успешно добавлен: " << newUser.dump() << std::endl;
-}
-
-// Функция для генерации валютных пар
-void generateCurrencyPairs(dbase& db) {
-    std::string lotFile = db.schema_name + "/lot/1.csv";
-    std::ifstream file(lotFile);
-    std::vector<std::string> lots;
-    std::string line;
-
-    // Чтение лотов из файла
-    std::getline(file, line); // Пропускаем заголовок
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        std::string lotId, lotName;
-        std::getline(ss, lotId, ',');
-        std::getline(ss, lotName, ',');
-        lots.push_back(lotId); // Сохраняем только ID лота
-    }
-    file.close();
-
-    // Генерация пар
-    int pairId = 1;
-    for (size_t i = 0; i < lots.size(); ++i) {
-        for (size_t j = 0; j < lots.size(); ++j) {
-            if (i != j) { // Исключаем одинаковые пары
-                json newPair;
-                newPair["pair_id"] = std::to_string(pairId++);
-                newPair["first_lot_id"] = lots[i]; // Используем ID лота
-                newPair["second_lot_id"] = lots[j]; // Используем ID лота
-                saveSingleEntryToCSV(db, "pair", newPair);
-            }
-        }
-    }
-
-}
-
-// Функция для создания ордера
-void createOrder(dbase& db, const std::string& userId, int pairId, double quantity, double price, const std::string& type) {
-    json newOrder;
-
-    // Получаем максимальный order_id
-    std::string orderFile = db.schema_name + "/order/1.csv";
-    int maxOrderId = getMaxOrderId(orderFile);
-    newOrder["order_id"] = std::to_string(maxOrderId + 1);
-    newOrder["user_id"] = userId;
-    newOrder["pair_id"] = std::to_string(pairId);
-    newOrder["quantity"] = std::to_string(quantity);
-    newOrder["price"] = std::to_string(price);
-    newOrder["type"] = type;
-    newOrder["closed"] = "";
-
-    // Сохранение нового ордера
-    saveSingleEntryToCSV(db, "order", newOrder);
-
-    // Вычисление стоимости ордера
-    double totalCost = quantity * price; // 300 * 0.015 = 4.5
-    std::cout << "Создание ордера для пользователя " << userId << " на сумму " << totalCost << std::endl;
-
-    // Получаем second_lot_id из таблицы пар
-    int secondLotId = getSecondLotIdFromPair(db, pairId);
-    if (secondLotId == -1) {
-        std::cerr << "Ошибка: второй лот не найден для пары ID: " << pairId << std::endl;
-        return;
-    }
-
-    std::string userLotFile = db.schema_name + "/user_lot/1.csv";
-    std::ifstream userFile(userLotFile);
-    std::string line;
-    std::string updatedContent;
-
-    // Проверяем наличие лота для списания
-    while (std::getline(userFile, line)) {
-        std::istringstream ss(line);
-        std::string userIdFromFile, lotId, quantityStr;
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, lotId, ',');
-        std::getline(ss, quantityStr, ',');
-
-        if (userIdFromFile == userId) {
-            double currentQuantity = std::stod(quantityStr);
-
-            // Обновляем quantity для второго лота
-            if (lotId == std::to_string(secondLotId)) {
-                double newQuantity = currentQuantity - totalCost; // Вычитаем quantity
-                updatedContent += userId + "," + lotId + "," + std::to_string(newQuantity) + "\n";
-                std::cout << "Обновленный quantity: " << newQuantity << std::endl;
-            } else {
-                updatedContent += line + "\n"; // Оставляем без изменений
-            }
-        } else {
-            updatedContent += line + "\n"; // Оставляем без изменений
-        }
-    }
-    userFile.close();
-
-    // Записываем обновлённый баланс обратно в файл
-    std::ofstream outFile(userLotFile);
-    if (outFile.is_open()) {
-        outFile << updatedContent;
-        std::cout << "Баланс обновлен и записан в файл." << std::endl;
-    } else {
-        std::cout << "Ошибка при открытии файла для записи." << std::endl;
-    }
-}
-
-
-void applyOrder(dbase& db, int userId, int orderId) {
-    std::string orderFile = db.schema_name + "/order/1.csv";
-    std::ifstream orderStream(orderFile);
-    std::string line;
-    json orderData;
-    bool orderFound = false;
-
-    // Считываем все ордера
-    std::vector<std::string> allOrders;
-
-    while (std::getline(orderStream, line)) {
-        allOrders.push_back(line);
-        std::istringstream ss(line);
-        std::string orderIdFromFile, userIdFromFile, pairIdStr, quantityStr, price, type, closed;
-        std::getline(ss, orderIdFromFile, ',');
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, pairIdStr, ',');
-        std::getline(ss, quantityStr, ',');
-        std::getline(ss, price, ',');
-        std::getline(ss, type, ',');
-        std::getline(ss, closed, ',');
-
-        if (orderIdFromFile == std::to_string(orderId)) {
-            // Проверка на тип ордера
-            if (type != "buy") {
-                std::cout << "Ошибка: ордер с ID " << orderId << " уже закрыт или не доступен для покупки." << std::endl;
-                return;
-            }
-
-            orderData["order_id"] = orderIdFromFile;
-            orderData["user_id"] = userIdFromFile;
-            orderData["pair_id"] = pairIdStr;
-            orderData["quantity"] = quantityStr;
-            orderData["price"] = price;
-            orderData["type"] = "sell"; // Меняем тип на sell
-            orderData["closed"] = ""; // Изначально пустое
-            orderFound = true;
-        }
-    }
-    orderStream.close();
-
-    if (!orderFound) {
-        std::cout << "Ошибка: ордер с ID " << orderId << " не найден." << std::endl;
-        return;
-    }
-
-    // Вычисляем стоимость ордера
-    double quantity = safeStod(orderData["quantity"].get<std::string>());
-    double price = safeStod(orderData["price"].get<std::string>());
-    double totalCost = quantity;
-
-    // Получаем first_lot_id из таблицы пар
-    int pairId = std::stoi(orderData["pair_id"].get<std::string>());
-    int firstLotId = getFirstLotIdFromPair(db, pairId);
-    if (firstLotId == -1) {
-        std::cerr << "Ошибка: первый лот не найден для пары ID: " << pairId << std::endl;
-        return;
-    }
-
-    std::string userLotFile = db.schema_name + "/user_lot/1.csv";
-    std::ifstream userFile(userLotFile);
-    std::string updatedContent;
-    bool lotUpdated = false;
-
-    // Проверяем наличие лота для списания
-    while (std::getline(userFile, line)) {
-        std::istringstream ss(line);
-        std::string userIdFromFile, lotId, quantityStr;
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, lotId, ',');
-        std::getline(ss, quantityStr, ',');
-
-        if (userIdFromFile == std::to_string(userId)) {
-            double currentQuantity = safeStod(quantityStr);
-
-            // Обновляем quantity для первого лота
-            if (lotId == std::to_string(firstLotId)) {
-                double newQuantity = currentQuantity - totalCost; // Вычитаем стоимость
-                updatedContent += userIdFromFile + "," + lotId + "," + std::to_string(newQuantity) + "\n";
-                lotUpdated = true;
-                std::cout << "Обновленный quantity: " << newQuantity << std::endl;
-            } else {
-                updatedContent += line + "\n"; // Оставляем без изменений
-            }
-        } else {
-            updatedContent += line + "\n"; // Оставляем без изменений
-        }
-    }
-    userFile.close();
-
-    if (!lotUpdated) {
-        std::cout << "Ошибка: лот для пользователя с ID " << userId << " не найден." << std::endl;
-        return;
-    }
-
-    // Записываем обновлённый баланс обратно в файл
-    std::ofstream outFile(userLotFile);
-    if (outFile.is_open()) {
-        outFile << updatedContent;
-        std::cout << "Баланс обновлен и записан в файл." << std::endl;
-    } else {
-        std::cout << "Ошибка при открытии файла для записи." << std::endl;
-    }
-
-    // Записываем все ордера обратно в файл
-    std::ofstream orderOutFile(orderFile);
-    if (orderOutFile.is_open()) {
-        for (const auto& order : allOrders) {
-            std::istringstream ss(order);
-            std::string orderIdFromFile, userIdFromFile, pairIdStr, quantityStr, price, type, closed;
-            std::getline(ss, orderIdFromFile, ',');
-            std::getline(ss, userIdFromFile, ',');
-            std::getline(ss, pairIdStr, ',');
-            std::getline(ss, quantityStr, ',');
-            std::getline(ss, price, ',');
-            std::getline(ss, type, ',');
-            std::getline(ss, closed, ',');
-
-            if (orderIdFromFile == orderData["order_id"].get<std::string>()) {
-                // Получаем текущее время
-                auto now = std::chrono::system_clock::now();
-                std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-                std::stringstream timeStream;
-                timeStream << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
-
-                orderOutFile << orderData["order_id"].get<std::string>() << ","
-                             << userIdFromFile << ","
-                             << pairIdStr << ","
-                             << quantityStr << ","
-                             << price << ","
-                             << orderData["type"].get<std::string>() << ","
-                             << timeStream.str() << "\n"; // Записываем текущее время в поле closed
-            } else {
-                orderOutFile << order << "\n";
-            }
-        }
-        orderOutFile.close();
-        std::cout << "Ордер обновлен на 'sell' и записан в файл." << std::endl;
-    } else {
-        std::cout << "Ошибка при открытии файла для записи ордеров." << std::endl;
-    }
-}
-
-
-void getOrders(dbase& db) {
-    std::string orderFile = db.schema_name + "/order/1.csv";
-    std::ifstream file(orderFile);
-    std::string line;
-
-    if (!file.is_open()) {
-        std::cerr << "Ошибка: не удалось открыть файл с ордерами." << std::endl;
-        return;
-    }
-
-    std::cout << "Список ордеров:" << std::endl;
-
-    // Пропускаем заголовок
-    std::getline(file, line);
-    while (std::getline(file, line)) {
-        std::cout << line << std::endl; // Выводим каждую строку (ордер)
-    }
-
-    file.close();
-}
-
-void getLots(dbase& db) {
-    std::string lotFile = db.schema_name + "/lot/1.csv";
-    std::ifstream file(lotFile);
-    std::string line;
-
-    if (!file.is_open()) {
-        std::cerr << "Ошибка: не удалось открыть файл с лотами." << std::endl;
-        return;
-    }
-
-    std::cout << "Список лотов:" << std::endl;
-
-    // Пропускаем заголовок
-    std::getline(file, line);
-    while (std::getline(file, line)) {
-        std::cout << line << std::endl; // Выводим каждую строку (лот)
-    }
-
-    file.close();
-}
-
-void getPairs(dbase& db) {
-    std::string pairFile = db.schema_name + "/pair/1.csv";
-    std::ifstream file(pairFile);
-    std::string line;
-
-    if (!file.is_open()) {
-        std::cerr << "Ошибка: не удалось открыть файл с парами." << std::endl;
-        return;
-    }
-
-    std::cout << "Список пар:" << std::endl;
-
-    // Пропускаем заголовок
-    std::getline(file, line);
-    while (std::getline(file, line)) {
-        std::cout << line << std::endl; // Выводим каждую строку (пара)
-    }
-
-    file.close();
-}
-
-void getUserAssets(dbase& db, const std::string& userId) {
-    std::string userLotFile = db.schema_name + "/user_lot/1.csv";
-    std::ifstream file(userLotFile);
-    std::string line;
-
-    if (!file.is_open()) {
-        std::cerr << "Ошибка: не удалось открыть файл с активами пользователей." << std::endl;
-        return;
-    }
-
-    std::cout << "Активы пользователя с ID " << userId << ":" << std::endl;
-
-    // Пропускаем заголовок
-    std::getline(file, line);
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        std::string userIdFromFile, lotId, quantityStr;
-        std::getline(ss, userIdFromFile, ',');
-        std::getline(ss, lotId, ',');
-        std::getline(ss, quantityStr, ',');
-
-        if (userIdFromFile == userId) {
-            std::cout << "Лот ID: " << lotId << ", Количество: " << quantityStr << std::endl; // Выводим активы
-        }
-    }
-
-    file.close();
-}
-
-
-int main() {
-    dbase db;
-    db.schema_name = "Биржа"; // Название папки для хранения данных
-
-    // Создание папки "Биржа", если она не существует
-    if (!fs::exists(db.schema_name)) {
-        fs::create_directory(db.schema_name);
-    }
-
-    // Создание папок для каждой таблицы
-    std::string tables[] = {"user", "lot", "user_lot", "order", "pair"};
-    for (const auto& table : tables) {
-        std::string folder = db.schema_name + "/" + table;
-        if (!fs::exists(folder)) {
-            fs::create_directory(folder);
-        }
-    }
-
-    // Открытие файла schema.json
-    std::ifstream inputFile("schema.json");
-    if (!inputFile.is_open()) {
-        std::cerr << "Ошибка: не удалось открыть файл schema.json" << std::endl;
-        return 1;
-    }
-
-    // Парсинг JSON
-    json j;
-    inputFile >> j;
-    inputFile.close();
-
-    // Сохранение данных о пользователях
-    for (const auto& user : j["user"]["data"]) {
-        saveSingleEntryToCSV(db, "user", user);
-    }
-
-    // Сохранение данных о лотах
-    for (const auto& lot : j["lot"]["data"]) {
-        saveSingleEntryToCSV(db, "lot", lot);
-    }
-
-    // Генерация валютных пар
-    generateCurrencyPairs(db);
-
-    // Бесконечный цикл для ввода команд
-    while (true) {
-        std::cout << "Введите команду (или 'exit' для выхода): ";
-        std::string command;
-        std::getline(std::cin, command);
-
-        if (command == "exit") {
-            std::cout << "Выход из программы." << std::endl;
-            break; // Выход из бесконечного цикла
-        }
-
-        std::istringstream iss(command);
-        std::string action;
-        iss >> action;
-
-        try {
-            if (action == "insert") {
-                std::string table;
-                iss >> table;
-
-                if (table == "user") {
-                    std::string username;
-                    iss >> username; // Считываем имя пользователя
-                    if (!username.empty()) {
-                        json lotData = j["lot"]; 
-                        addUser(db, username, lotData);
-                    } else {
-                        std::cout << "Ошибка: имя пользователя не указано." << std::endl;
+        # Читаем все ордера
+        all_orders = []
+        order_data = {}
+        order_found = False
+
+        with open(order_file, 'r', newline='') as order_stream:
+            reader = csv.reader(order_stream)
+            for line in reader:
+                all_orders.append(line)
+                if line[0] == str(order_id):
+                    # Проверка на тип ордера
+                    if line[5] != "buy":
+                        print(f"Ошибка: ордер с ID {order_id} уже закрыт или не доступен для покупки.")
+                        return
+                    
+                    order_data = {
+                        "order_id": line[0],
+                        "user_id": line[1],
+                        "pair_id": line[2],
+                        "quantity": line[3],
+                        "price": line[4],
+                        "type": "sell",  # Меняем тип на sell
+                        "closed": ""  # Изначально пустое
                     }
-                }
-            } else if (action == "assets") {
-                std::string userId;
-                iss >> userId; // Считываем user_id
-                if (!userId.empty()) {
-                    getUserAssets(db, userId); // Вызов функции для получения активов пользователя
-                } else {
-                    std::cout << "Ошибка: user_id не указан." << std::endl;
-                }
-            } else if (action == "create") {
-                std::string type;
-                iss >> type;
+                    order_found = True
 
-                if (type == "order") {
-                    std::string userId;
-                    int pairId;
-                    double quantity, price;
-                    std::string orderType;
+        if not order_found:
+            print(f"Ошибка: ордер с ID {order_id} не найден.")
+            return
 
-                    iss >> userId >> pairId >> quantity >> price >> orderType;
-                    createOrder(db, userId, pairId, quantity, price, orderType);
-                }
-            } else if (action == "list") {
-            std::string type;
-            iss >> type;
+        # Вычисляем стоимость ордера
+        quantity = float(order_data["quantity"])
+        price = float(order_data["price"])
+        total_cost = quantity
 
-            if (type == "orders") {
-                getOrders(db); // Вызов функции для получения списка ордеров
-            } else if (type == "lots") {
-                getLots(db); // Вызов функции для получения списка лотов
-            } else if (type == "pairs") {
-                getPairs(db); // Вызов функции для получения списка пар
-            }
-            }else if (action == "apply") {
-                int userId, orderId;
-                iss >> userId >> orderId; // Считываем user_id и order_id
-                applyOrder(db, userId, orderId);
-            } else if (action == "delete") {
-                std::string type;
-                iss >> type;
+        # Получаем first_lot_id из таблицы пар
+        pair_id = int(order_data["pair_id"])
+        first_lot_id = self.get_first_lot_id_from_pair(pair_id)
+        if first_lot_id == -1:
+            print(f"Ошибка: первый лот не найден для пары ID: {pair_id}")
+            return
 
-                if (type == "order") {
-                    std::string orderId;
-                    iss >> orderId; // Считываем order_id
-                    if (!orderId.empty()) {
-                        deleteOrder(db, orderId);
-                    } else {
-                        std::cout << "Ошибка: order_id не указано." << std::endl;
-                    }
-                }
-            } else {
-                throw runtime_error("Неизвестная команда: " + command);
-            }
-        } catch (const exception& e) {
-            std::cout << "Ошибка: " << e.what() << std::endl;
-        }
-    }
+        user_lot_file = os.path.join(self.schema_name, "user_lot", "1.csv")
+        updated_content = []
+        lot_updated = False
 
-    return 0;
-}
+        # Проверяем наличие лота для списания
+        with open(user_lot_file, 'r', newline='') as user_file:
+            reader = csv.reader(user_file)
+            for line in reader:
+                if line[0] == str(user_id):
+                    current_quantity = float(line[2])
+                    # Обновляем quantity для первого лота
+                    if line[1] == str(first_lot_id):
+                        new_quantity = current_quantity - total_cost  # Вычитаем стоимость
+                        updated_content.append([line[0], line[1], str(new_quantity)])
+                        lot_updated = True
+                        print(f"Обновленный quantity: {new_quantity}")
+                    else:
+                        updated_content.append(line)  # Оставляем без изменений
+                else:
+                    updated_content.append(line)  # Оставляем без изменений
+
+        if not lot_updated:
+            print(f"Ошибка: лот для пользователя с ID {user_id} не найден.")
+            return
+
+        # Записываем обновлённый баланс обратно в файл
+        with open(user_lot_file, 'w', newline='') as out_file:
+            writer = csv.writer(out_file)
+            writer.writerows(updated_content)
+            print("Баланс обновлен и записан в файл.")
+
+        # Записываем все ордера обратно в файл
+        with open(order_file, 'w', newline='') as order_out_file:
+            writer = csv.writer(order_out_file)
+            for order in all_orders:
+                if order[0] == order_data["order_id"]:
+                    # Получаем текущее время
+                    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    writer.writerow([
+                        order_data["order_id"],
+                        order[1],
+                        order[2],
+                        order[3],
+                        order[4],
+                        order_data["type"],
+                        now  # Записываем текущее время в поле closed
+                    ])
+                else:
+                    writer.writerow(order)
+            print("Ордер обновлен на 'sell' и записан в файл.")
+
+def main():
+    db = DBase("Биржа")
+
+    if not os.path.exists(db.schema_name):
+        os.makedirs(db.schema_name)
+
+    tables = ["user", "lot", "user_lot", "order", "pair"]
+    for table in tables:
+        folder = f"{db.schema_name}/{table}"
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        
+        # Создаем файл 1.csv для каждой таблицы, если он не существует
+        file_path = os.path.join(folder, "1.csv")
+        if not os.path.exists(file_path):
+            with open(file_path, 'w', newline='') as file:
+                writer = csv.writer(file)
+                if table == "user":
+                    writer.writerow(["user_id", "username", "key"])
+                elif table == "lot":
+                    writer.writerow(["lot_id", "name"])
+                elif table == "user_lot":
+                    writer.writerow(["user_id", "lot_id", "quantity"])
+                elif table == "order":
+                    writer.writerow(["order_id", "user_id", "pair_id", "quantity", "price", "type", "closed"])
+                elif table == "pair":
+                    writer.writerow(["pair_id", "first_lot_id", "second_lot_id"])
+
+    with open("schema.json", 'r') as input_file:
+        data = json.load(input_file)
+
+    for user in data["user"]["data"]:
+        db.save_single_entry_to_csv("user", user)
+
+    for lot in data["lot"]["data"]:
+        db.save_single_entry_to_csv("lot", lot)
+
+    db.generate_currency_pairs()
+
+    while True:
+        command = input("Введите команду (или 'exit' для выхода): ")
+        if command == "exit":
+            print("Выход из программы.")
+            break
+
+        parts = command.split()
+        action = parts[0]
+
+        try:
+            if action == "insert":
+                table = parts[1]
+                if table == "user":
+                    username = parts[2]
+                    if username:
+                        lot_data = data["lot"]
+                        db.add_user(username, lot_data)
+                    else:
+                        print("Ошибка: имя пользователя не указано.")
+            elif action == "assets":
+                user_id = parts[1]
+                db.get_user_assets(user_id)
+            elif action == "orders":
+                db.get_orders()
+            elif action == "lots":
+                db.get_lots()
+            elif action == "pairs":
+                db.get_pairs()
+            elif action == "create":
+                if parts[1] == "order":
+                    user_id = parts[2]
+                    pair_id = int(parts[3])
+                    quantity = float(parts[4])
+                    price = float(parts[5])
+                    order_type = parts[6]
+                    db.create_order(user_id, pair_id, quantity, price, order_type)
+                else:
+                    print("Ошибка: неизвестный тип создания.")
+            elif action == "apply":
+                user_id = int(parts[1])
+                order_id = int(parts[2])
+                db.apply_order(user_id, order_id)
+            elif action == "delete":
+                if parts[1] == "order":
+                    order_id = parts[2]
+                    db.delete_order(order_id)
+                else:
+                    print("Ошибка: неизвестный тип удаления.")
+            else:
+                print("Ошибка: неизвестная команда.")
+        except IndexError:
+            print("Ошибка: недостаточно аргументов для команды.")
+        except Exception as e:
+            print(f"Ошибка: {e}")
+
+if __name__ == "__main__":
+    main()
