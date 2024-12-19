@@ -152,13 +152,14 @@ class DBase:
 
         self.save_single_entry_to_csv("user", new_user)
 
-        for lot in lot_data["data"]:
+        for lot in lot_data:
             user_lot_entry = {
                 "user_id": new_user["user_id"],
                 "lot_id": lot["lot_id"],
                 "quantity": "1000"  # Начальный баланс
             }
             self.save_single_entry_to_csv("user_lot", user_lot_entry)
+
 
         print(f"Новый пользователь успешно добавлен: {json.dumps(new_user)}")
 
@@ -189,10 +190,12 @@ class DBase:
         pair_file = f"{self.schema_name}/pair/1.csv"
         with open(pair_file, 'r') as file:
             reader = csv.reader(file)
+            next(reader, None)  # Пропускаем заголовок
             for row in reader:
-                if row and ((row[1] == first_lot and row[2] == second_lot) or (row[1] == second_lot and row[2] == first_lot)):
-                    return int(row[0])  # Возвращаем найденный pairId
+                if row and row[1] == first_lot and row[2] == second_lot:
+                    return int(row[0])  # Возвращаем pair_id
         return -1
+
 
     def get_reverse_pair_id_and_check_orders(self, pair_id, order_type, price, quantity):
         pair_file = f"{self.schema_name}/pair/1.csv"
@@ -227,54 +230,103 @@ class DBase:
                     return -1
         return -1
 
+
+
     def create_order(self, user_id, pair_id, quantity, price, order_type):
-        new_order = {}
         order_file = f"{self.schema_name}/order/1.csv"
-        max_order_id = self.get_max_order_id(order_file)
-        new_order["order_id"] = str(max_order_id + 1)
-        new_order["user_id"] = user_id
-        new_order["pair_id"] = str(pair_id)
-        new_order["quantity"] = str(quantity)
-        new_order["price"] = str(price)
-        new_order["type"] = order_type
-        new_order["closed"] = ""
+        reverse_pair_id = self.find_pair_id_by_lots(
+            str(self.get_second_lot_id_from_pair(pair_id)),
+            str(self.get_first_lot_id_from_pair(pair_id))
+        )
 
+        if reverse_pair_id == -1:
+            print(f"Ошибка: обратная пара для пары ID {pair_id} не найдена.")
+            return
+
+        matched_orders = []
         remaining_quantity = quantity
-        reverse_pair_id = self.get_reverse_pair_id_and_check_orders(pair_id, order_type, price, remaining_quantity)
 
+        with open(order_file, 'r', newline='') as file:
+            reader = csv.reader(file)
+            next(reader, None)  # Пропускаем заголовок
+            for row in reader:
+                if (
+                    row
+                    and int(row[2]) == reverse_pair_id  # Проверяем соответствие пары
+                    and row[5] == "buy"                # Только тип "buy"
+                    and not row[6]                     # Ордер еще не закрыт
+                ):
+                    existing_quantity = float(row[3])
+                    existing_price = float(row[4])
+
+                    # Рассчитываем обратный курс
+                    reverse_price = 1 / price
+
+                    if existing_price <= reverse_price:
+                        matched_quantity = min(remaining_quantity, existing_quantity)
+                        matched_orders.append({
+                            "order_id": row[0],
+                            "user_id": row[1],
+                            "quantity": matched_quantity,
+                            "price": existing_price,
+                            "remaining_quantity": existing_quantity - matched_quantity
+                        })
+                        remaining_quantity -= matched_quantity
+
+                        if remaining_quantity <= 0:
+                            break
+
+        # Обрабатываем найденные обратные ордера
+        for matched_order in matched_orders:
+            print(f"Удовлетворяется ордер ID {matched_order['order_id']} на количество {matched_order['quantity']}.")
+
+            # Списание у пользователя, создающего новый ордер
+            self.update_user_lot_balance(
+                user_id,
+                self.get_second_lot_id_from_pair(pair_id),  # Списание с валюты второй пары
+                -matched_order["quantity"] * price
+            )
+            self.update_user_lot_balance(
+                user_id,
+                self.get_first_lot_id_from_pair(pair_id),  # добавление валюты на которую менялся
+                matched_order["quantity"]
+            )
+
+            # Пополнение у владельца удовлетворяемого ордера
+            self.update_user_lot_balance(
+                matched_order["user_id"],
+                self.get_second_lot_id_from_pair(pair_id),
+                matched_order["quantity"]
+            )
+
+            # Закрываем ордер, если он полностью удовлетворен
+            if matched_order["remaining_quantity"] <= 0:
+                self.close_order(matched_order["order_id"])
+            else:
+                self.update_order_quantity(matched_order["order_id"], matched_order["remaining_quantity"])
+
+        # Если осталась неудовлетворенная часть, создаем новый ордер
         if remaining_quantity > 0:
-            self.save_single_entry_to_csv("order", new_order)
             total_cost = remaining_quantity * price
-            print(f"Создание нового ордера для пользователя {user_id} на сумму {total_cost}")
+            new_order = {
+                "order_id": str(self.get_max_order_id(order_file) + 1),
+                "user_id": user_id,
+                "pair_id": str(pair_id),
+                "quantity": str(remaining_quantity),
+                "price": str(price),
+                "type": "buy",
+                "closed": ""
+            }
+            self.save_single_entry_to_csv("order", new_order)
+            print(f"Создание нового ордера для пользователя {user_id} на сумму {total_cost}.")
 
-            second_lot_id = self.get_second_lot_id_from_pair(pair_id)
-            if second_lot_id == -1:
-                print(f"Ошибка: второй лот не найден для пары ID: {pair_id}")
-                return
+            # Списание остатка у пользователя, создающего новый ордер
+            self.update_user_lot_balance(
+                user_id,
+                self.get_second_lot_id_from_pair(pair_id),
+                -total_cost
+            )
 
-            user_lot_file = f"{self.schema_name}/user_lot/1.csv"
-            updated_content = []
-
-            with open(user_lot_file, 'r') as file:
-                reader = csv.reader(file)
-                for row in reader:
-                    if row and row[0] == user_id:
-                        current_quantity = float(row[2])
-                        if row[1] == str(second_lot_id):
-                            new_quantity = current_quantity - total_cost
-                            updated_content.append([user_id, row[1], str(new_quantity)])
-                            print(f"Обновленный quantity: {new_quantity}")
-                        else:
-                            updated_content.append(row)
-                    else:
-                        updated_content.append(row)
-
-            with open(user_lot_file, 'w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerows(updated_content)
-                print("Баланс обновлен и записан в файл.")
-        else:
-            print("Все количество ордера удовлетворено существующими ордерами.")
 
     def get_orders(self):
         order_file = f"{self.schema_name}/order/1.csv"
@@ -409,6 +461,61 @@ class DBase:
                     writer.writerow(order)
             print("Ордер обновлен на 'sell' и записан в файл.")
 
+    def update_user_lot_balance(self, user_id, lot_id, quantity):
+        user_lot_file = f"{self.schema_name}/user_lot/1.csv"
+        updated_content = []
+        lot_found = False
+
+        with open(user_lot_file, 'r', newline='') as file:
+            reader = csv.reader(file)
+            for line in reader:
+                if line[0] == user_id and line[1] == str(lot_id):
+                    current_quantity = float(line[2])
+                    new_quantity = current_quantity + quantity
+                    updated_content.append([user_id, lot_id, str(new_quantity)])
+                    lot_found = True
+                else:
+                    updated_content.append(line)
+
+        if not lot_found:
+            updated_content.append([user_id, lot_id, str(quantity)])
+
+        with open(user_lot_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerows(updated_content)
+
+    def close_order(self, order_id):
+        order_file = f"{self.schema_name}/order/1.csv"
+        updated_orders = []
+
+        with open(order_file, 'r', newline='') as file:
+            reader = csv.reader(file)
+            for line in reader:
+                if line[0] == order_id:
+                    line[5] = "sell"  # Обновляем тип на "sell"
+                    line[6] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Закрываем ордер
+                updated_orders.append(line)
+
+        with open(order_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerows(updated_orders)
+
+    def update_order_quantity(self, order_id, new_quantity):
+        order_file = f"{self.schema_name}/order/1.csv"
+        updated_orders = []
+
+        with open(order_file, 'r', newline='') as file:
+            reader = csv.reader(file)
+            for line in reader:
+                if line[0] == order_id:
+                    line[3] = str(new_quantity)  # Обновляем количество
+                updated_orders.append(line)
+
+        with open(order_file, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerows(updated_orders)
+
+
 def main():
     db = DBase("Биржа")
 
@@ -443,8 +550,15 @@ def main():
     for user in data["user"]["data"]:
         db.save_single_entry_to_csv("user", user)
 
-    for lot in data["lot"]["data"]:
-        db.save_single_entry_to_csv("lot", lot)
+    with open("config.json", 'r') as config_file:
+        config = json.load(config_file)
+
+        lots_from_config = config["lots"]
+
+    for lot_id, lot_name in enumerate(lots_from_config, start=1):
+        lot_entry = {"lot_id": str(lot_id), "name": lot_name}
+        db.save_single_entry_to_csv("lot", lot_entry)
+
 
     db.generate_currency_pairs()
 
@@ -463,7 +577,7 @@ def main():
                 if table == "user":
                     username = parts[2]
                     if username:
-                        lot_data = data["lot"]
+                        lot_data = [{"lot_id": str(idx + 1), "name": name} for idx, name in enumerate(lots_from_config)]
                         db.add_user(username, lot_data)
                     else:
                         print("Ошибка: имя пользователя не указано.")
